@@ -32,6 +32,18 @@ data |>
   facet_grid(name ~ RefSp, scales="free_y") +
   theme(legend.position = "bottom") +
   xlab("Reference Se (%)") + ylab("Estimate for New Test")
+
+
+data |>
+  mutate(`True Prevalence` = factor(str_c(Prev*100,"%")), RefSp = str_c("Reference Sp=", RefSp*100, "%")) |>
+  mutate(name = case_match(name, "NewSe" ~ "New Test Se", "NewSp" ~ "New Test Sp")) |>
+  mutate(bias = value - if_else(name=="New Test Se", TrueSe, TrueSp)) |>
+  ggplot(aes(x=RefSe*100, y=bias*100, col=`True Prevalence`)) +
+  geom_hline(yintercept=0, lty="dashed") +
+  geom_line() +
+  facet_grid(name ~ RefSp, scales="free_y") +
+  theme(legend.position = "bottom") +
+  xlab("Reference Se (%)") + ylab("Bias for New Test (% points)")
 ggsave("notebooks/bias.pdf", width=8, height=4)
 
 
