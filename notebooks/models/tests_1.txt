@@ -1,0 +1,23 @@
+model{
+
+  Positive ~ dbin(se_prob[2] + sp_prob[2], N)
+  
+  se_prob[1] <- prev*(1-se)
+  se_prob[2] <- prev*se
+  sp_prob[1] <- (1-prev)*sp
+  sp_prob[2] <- (1-prev)*(1-sp)
+  
+  for(i in 1:2){
+    ppp[i] <- se_prob[i] / (se_prob[i] + sp_prob[i])
+  }
+  
+  for(t in 1:1){
+    se[t] ~ dbeta(Alpha[t,1], Beta[t,1])
+    sp[t] ~ dbeta(Alpha[t,2], Beta[t,2])
+  }
+  prev ~ dbeta(1,1)
+  
+  #data# Positive, N, Alpha, Beta
+  #monitor# prev, se, sp, ppp  
+
+}
