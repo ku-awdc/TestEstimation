@@ -22,15 +22,141 @@ tibble(
 
 tribble(~N, ~Prev,
   100, 0.2,
-  100, 0.3,
+#  100, 0.3,
   ) ->
   populations
 
 tribble(~TestNumber, ~Parameter, ~Alpha, ~Beta,
-  1, "Se", 50, 50,
-  1, "Sp", 100, 1,
-) ->
+  1, "Se", 36+1, 4+1,
+  1, "Sp", 99+1, 1+1,
+) |>
+  mutate(Estimate = (Alpha-1)/(Alpha+Beta-2), TestName="Reference") ->
   ref
+ref
+
+tribble(~TestNumber, ~Parameter, ~Alpha, ~Beta,
+  1, "Se", 20+1, 20+1,
+  1, "Sp", 95+1, 5+1,
+) |>
+  mutate(Estimate = (Alpha-1)/(Alpha+Beta-2), TestName="Reference") ->
+  ref
+ref
+
+
+## TODO:
+# 1. Incorporate ppp to get CI for true prevalence
+# 2. Implement CI for se/sp by bootstrapping from distn. of input ref se/sp and estimated true prevalence
+# 3. Speed up special case of 1 population
+# 4. Implement correlated reference and comparator
+# 5. Implement 2x ref tests
+# 6. Re-estimate prevalence from comparator test using the estimated se and sp,
+#    and check against original estimate - this gives us some estimate of correlation
+
+source("notebooks/tests_R6.R")
+test_eval <- TestEval$new(ref, 500L)
+(tally <- test_eval$simulate_data(0.2, c(0.8,0.9)))[1,,]
+(tally <- test_eval$simulate_data(0.2, c(0.8,0.9), reassign_prob=0.75))[1,,]
+test_eval$estimate_prev()$par
+test_eval$estimate_comp()$par
+test_eval$re_estimate_prev()$par
+
+test_eval$get_estimates()
+
+move1 <- rbinom(dim(tally)[1],tally[,2,1],0.5)
+move2 <- rbinom(dim(tally)[1],tally[,1,2],0.5)
+tally[,1,1] <- tally[,1,1] +move1
+tally[,2,1] <- tally[,2,1] -move1
+tally[,1,2] <- tally[,1,2] +move2
+tally[,2,2] <- tally[,2,2] -move2
+test_eval$set_data(tally)
+
+test_eval$estimate_prev()$par
+test_eval$estimate_comp()$par
+
+## Use ppp to get CI for true prevalence?
+ppp_prev <- c(
+  apply(test_eval$calculate_ppp(use_comp = FALSE) * apply(tally,c(1,3),sum),1,sum),
+  apply((1-test_eval$calculate_ppp(use_comp = FALSE)) * apply(tally,c(1,3),sum),1,sum)
+) |> as.matrix()
+stopifnot(all.equal(apply(ppp_prev,2,sum), (apply(tally,c(1,3),sum) |> apply(1,sum))))
+ppp_prev[1,] / apply(ppp_prev,2,sum)
+qbeta(c(0.025,0.975), ppp_prev[1,1]+1, ppp_prev[2,1]+1)
+
+test_eval$calculate_ppp()
+test_eval$get_estimates()
+
+
+source("notebooks/tests_R6.R")
+test_eval <- TestEval$new(ref, c(500L, 250L))
+(tally <- test_eval$simulate_data(c(0.1,0.2), c(0.8,0.9), reassign_prob = 0.95))
+tally[1,,]
+tally[2,,]
+test_eval$estimate_prev()$par
+test_eval$estimate_comp()$par
+
+test_eval$re_estimate_prev()$par
+test_eval$estimate_hw()$par
+
+
+move1 <- rbinom(dim(tally)[1],tally[,2,1],0.5)
+move2 <- rbinom(dim(tally)[1],tally[,1,2],0.5)
+tally[,1,1] <- tally[,1,1] +move1
+tally[,2,1] <- tally[,2,1] -move1
+tally[,1,2] <- tally[,1,2] +move2
+tally[,2,2] <- tally[,2,2] -move2
+test_eval$set_data(tally)
+
+test_eval$estimate_prev()$par
+test_eval$estimate_comp()$par
+
+test_eval$estimate_prev()$par
+test_eval$estimate_comp()$par
+
+## Use ppp to get CI for true prevalence?
+ppp_prev <- bind_rows(
+  apply(test_eval$calculate_ppp(use_comp = FALSE) * apply(tally,c(1,3),sum),1,sum),
+  apply((1-test_eval$calculate_ppp(use_comp = FALSE)) * apply(tally,c(1,3),sum),1,sum)
+) |> as.matrix()
+stopifnot(apply(ppp_prev,2,sum) == (apply(tally,c(1,3),sum) |> apply(1,sum)))
+ppp_prev[1,] / apply(ppp_prev,2,sum)
+qbeta(c(0.025,0.975), ppp_prev[1,1]+1, ppp_prev[2,1]+1)
+
+test_eval$estimate_comp(include_prev=TRUE)$par
+test_eval$estimate_hw()$par
+test_eval$calculate_ppp()
+test_eval$get_estimates()
+
+
+
+
+source("notebooks/tests_R6.R")
+test_eval <- TestEval$new(ref, c(500L, 250L))
+tibble(Iteration = 1:1000) |>
+  rowwise() |>
+  group_split() |>
+  pblapply(function(x){
+    test_eval$simulate_data(c(0.1,0.2), c(0.8,0.9), reassign_prob=0.75)
+    #test_eval$simulate_data(c(0.1), c(0.8,0.9))
+    test_eval$estimate_prev()$par
+    test_eval$estimate_comp()$par
+    x |> bind_cols(test_eval$get_estimates(beta_n=0))
+  }, cl=6L) |>
+  bind_rows() ->
+  res
+
+ggplot(res, aes(x=Parameter, y=Estimate, col=Method)) +
+  geom_hline(aes(yintercept=Estimate), tibble(Parameter=c("Se","Sp"),Estimate=c(0.8,0.9))) +
+  geom_boxplot()
+
+ggplot(res2, aes(x=Parameter, y=Estimate, col=Method)) +
+  geom_hline(aes(yintercept=Estimate), tibble(Parameter=c("Se","Sp"),Estimate=c(0.8,0.9))) +
+  geom_boxplot()
+
+
+
+
+stop("OLDER BELOW HERE, but some of it is still useful - JAGS code etc")
+
 
 tribble(
   ~TestNumber, ~Se, ~Sp,
@@ -38,12 +164,116 @@ tribble(
 ) ->
   comp
 
+
+## Using point estimates:
+
+ref |>
+  mutate(Estimate = (Alpha-1)/(Alpha+Beta-2), Type="Reference") |>
+  select(Type, TestNumber, Parameter, Estimate) |>
+  pivot_wider(names_from="Parameter", values_from="Estimate") |>
+  bind_rows(
+    comp |> mutate(Type = "Comparator")
+  ) |>
+  mutate(TestIndex = str_c("Test_", row_number())) ->
+  tests
+
+se <- tests$Se
+sp <- tests$Sp
+p <- 1
+
+make_probs_fun <- function(n_tests, n_pops){
+  stopifnot(n_pops==1L, n_tests==2L)
+
+  compiler::cmpfun(
+    function(prev, test1, test2){
+      se <- c(test1[1], test2[1])
+      sp <- c(test1[2], test2[2])
+      probs <- array(dim=c(1,2,2,2), dimnames = list("Pop1",c("Se","Sp"),str_c("Test1",c("-","+")),str_c("Test2",c("-","+"))))
+      probs["Pop1","Se","Test1-","Test2-"] <- prev[p]*(1-se[1])*(1-se[2])
+      probs["Pop1","Se","Test1+","Test2-"] <- prev[p]*se[1]*(1-se[2])
+      probs["Pop1","Se","Test1-","Test2+"] <- prev[p]*(1-se[1])*se[2]
+      probs["Pop1","Se","Test1+","Test2+"] <- prev[p]*se[1]*se[2]
+      probs["Pop1","Sp","Test1-","Test2-"] <- (1-prev[p])*sp[1]*sp[2]
+      probs["Pop1","Sp","Test1+","Test2-"] <- (1-prev[p])*(1-sp[1])*sp[2]
+      probs["Pop1","Sp","Test1-","Test2+"] <- (1-prev[p])*sp[1]*(1-sp[2])
+      probs["Pop1","Sp","Test1+","Test2+"] <- (1-prev[p])*(1-sp[1])*(1-sp[2])
+      probs
+    }
+  )
+}
+
+make_ppp_fun <- function(n_tests, n_pops){
+  stopifnot(n_pops==1L, n_tests==2L)
+
+  compiler::cmpfun(
+    function(prev, test1, test2){
+      se <- c(test1[1], test2[1])
+      sp <- c(test1[2], test2[2])
+      probs <- array(dim=c(1,2,2,2), dimnames = list("Pop1",c("Se","Sp"),str_c("Test1",c("-","+")),str_c("Test2",c("-","+"))))
+      probs["Pop1","Se","Test1-","Test2-"] <- prev[p]*(1-se[1])*(1-se[2])
+      probs["Pop1","Se","Test1+","Test2-"] <- prev[p]*se[1]*(1-se[2])
+      probs["Pop1","Se","Test1-","Test2+"] <- prev[p]*(1-se[1])*se[2]
+      probs["Pop1","Se","Test1+","Test2+"] <- prev[p]*se[1]*se[2]
+      probs["Pop1","Sp","Test1-","Test2-"] <- (1-prev[p])*sp[1]*sp[2]
+      probs["Pop1","Sp","Test1+","Test2-"] <- (1-prev[p])*(1-sp[1])*sp[2]
+      probs["Pop1","Sp","Test1-","Test2+"] <- (1-prev[p])*sp[1]*(1-sp[2])
+      probs["Pop1","Sp","Test1+","Test2+"] <- (1-prev[p])*(1-sp[1])*(1-sp[2])
+      probs
+    }
+  )
+}
+
+make_prob <- make_probs_fun(2,1)
+make_prob(0.2, test1, test2)
+
+tally <- rmultinom(1, size=populations$N[p], prob=make_prob(populations$Prev[p], test1, test2) |> apply(c(3,4), sum))
+
+optimise(function(x) dmultinom(tally, populations$N[p], make_prob(x, test1, test2) |> apply(c(3,4), sum), log=TRUE), c(0,1), maximum=TRUE)
+
+reftally <- tally[c(1,2)] + tally[c(3,4)]
+opt <- optimise(function(x) dmultinom(reftally, populations$N[p], make_prob(x, test1, test2) |> apply(c(3), sum), log=TRUE), c(0,1), maximum=TRUE)
+(estprev <- opt$maximum)
+
+
+make_ppp <-
+
+probs <- make_prob(estprev, test1, test2) |> apply(c(2,3), sum)
+ppp <- probs["Se",] / (probs["Se",] + probs["Sp",])
+
+
+optim(c(se=0.9, sp=0.9), function(x) -dmultinom(tally, populations$N[p], make_prob(estprev, test1, x) |> apply(c(3,4), sum), log=TRUE), method="L-BFGS-B", lower=1e-6, upper=1-1e-6)
+optim(c(se=0.9, sp=0.9), function(x) -dmultinom(tally, populations$N[p], make_prob(estprev, test1, x) |> apply(c(3,4), sum), log=TRUE))
+
+
+
+qbeta(0.5, (tally[4]*ppp[2] + tally[3]*ppp[1])+1, (tally[2]*ppp[2] + tally[1]*ppp[1])+1)
+tally[4]/(tally[4]+tally[3])
+
+qbeta(0.5, (1 - tally[4]*ppp[2] + tally[3]*ppp[1])+1, (tally[2]*ppp[2] + tally[1]*ppp[1])+1)
+tally[4]/(tally[4]+tally[3])
+
+reframe(
+  Se = rbeta(beta_n, sum(PPP[Result==1])+1, sum(PPP[Result==0])+1),
+  Sp = rbeta(beta_n, sum(1-PPP[Result==0])+1, sum(1-PPP[Result==1])+1)
+)
+
+
+
+## Not identifiable as df < params:
+ctally <- tally[c(1,3)] + tally[c(2,4)]
+optim(c(se=0.9, sp=0.9), function(x) -dmultinom(ctally, populations$N[p], make_prob(estprev, test1, x) |> apply(c(4), sum), log=TRUE), method="L-BFGS-B", lower=0.00001, upper=0.99999)
+optim(c(se=0.9, sp=0.9), function(x) -dmultinom(ctally, populations$N[p], make_prob(estprev, test1, x) |> apply(c(4), sum), log=TRUE))
+
+
+
 models <- list(
   readLines("notebooks/models/tests_1B.txt") |> str_c(collapse="\n"),
   readLines("notebooks/models/tests_2.txt") |> str_c(collapse="\n")
 )
 
 
+
+## Shows bias, and CI are not the same as when incorporating uncertainty in PPP:
 cifun <- function(populations, ref, comp, include_comparator = FALSE, beta_n = 1000L){
 
   stopifnot(
