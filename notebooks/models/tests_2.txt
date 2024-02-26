@@ -1,0 +1,31 @@
+model{
+
+  for(p in 1:P){
+    Tally[1:4,p] ~ dmulti(se_prob[1:4,p] + sp_prob[1:4,p], N[p])
+  
+    se_prob[1,p] <- prev[p]*(1-se[1])*(1-se[2])
+    se_prob[2,p] <- prev[p]*se[1]*(1-se[2])
+    se_prob[3,p] <- prev[p]*(1-se[1])*se[2]
+    se_prob[4,p] <- prev[p]*se[1]*se[2]
+    
+    sp_prob[1,p] <- (1-prev[p])*sp[1]*sp[2]
+    sp_prob[2,p] <- (1-prev[p])*(1-sp[1])*sp[2]
+    sp_prob[3,p] <- (1-prev[p])*sp[1]*(1-sp[2])
+    sp_prob[4,p] <- (1-prev[p])*(1-sp[1])*(1-sp[2])
+  
+    for(i in 1:4){
+      ppp[i,p] <- se_prob[i,p] / (se_prob[i,p] + sp_prob[i,p])
+    }
+    
+    prev[p] ~ dbeta(1,1)    
+  }
+
+  for(t in 1:2){
+    se[t] ~ dbeta(Alpha[t,1], Beta[t,1])
+    sp[t] ~ dbeta(Alpha[t,2], Beta[t,2])
+  }
+  
+  #data# Tally, N, P, Alpha, Beta
+  #monitor# prev, se, sp, ppp  
+
+}

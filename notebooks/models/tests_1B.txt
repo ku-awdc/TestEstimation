@@ -9,7 +9,7 @@ model{
     sp_prob[2,p] <- (1-prev[p])*(1-sp)
   
     for(i in 1:2){
-      ppp[i,p] <- se_prob[i,p] / (se_prob[i,p] + sp_prob[i,p])
+      ppp[i,p] <- prev[p] #se_prob[i,p] / (se_prob[i,p] + sp_prob[i,p])
     }
     
     prev[p] ~ dbeta(1,1)    

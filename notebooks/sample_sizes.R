@@ -16,17 +16,21 @@ set.seed(2024-02-23)
 tibble(
   RefSe = 1,
   RefSp = 1,
-
 )
 
 ## With known reference standard:
 
+tribble(~N, ~Prev,
+  100, 0.2,
+  100, 0.3,
+  ) ->
+  populations
+
 tribble(~TestNumber, ~Parameter, ~Alpha, ~Beta,
-  1, "Se", 20, 2,
-  1, "Sp", 40, 1,
+  1, "Se", 50, 50,
+  1, "Sp", 100, 1,
 ) ->
   ref
-
 
 tribble(
   ~TestNumber, ~Se, ~Sp,
@@ -35,11 +39,21 @@ tribble(
   comp
 
 models <- list(
-  readLines("notebooks/models/tests_1.txt") |> str_c(collapse="\n")
+  readLines("notebooks/models/tests_1B.txt") |> str_c(collapse="\n"),
+  readLines("notebooks/models/tests_2.txt") |> str_c(collapse="\n")
 )
 
 
-cifun <- function(N, prevalence, ref, comp, include_comparator = FALSE, beta_n = 1000L){
+cifun <- function(populations, ref, comp, include_comparator = FALSE, beta_n = 1000L){
+
+  stopifnot(
+    is.data.frame(populations),
+    nrow(populations) >= 1L,
+    c("N","Prev") %in% names(populations),
+    populations$N >= 1L,
+    populations$N %% 1 == 0,
+    populations$Prev >= 0, populations$Prev <= 1
+  )
 
   stopifnot(is_tibble(ref), c("TestNumber","Parameter","Alpha","Beta") %in% names(ref), ref[["Parameter"]] %in% c("Se","Sp"))
   stopifnot(is_tibble(comp), c("TestNumber", "Se","Sp") %in% names(comp))
@@ -47,6 +61,8 @@ cifun <- function(N, prevalence, ref, comp, include_comparator = FALSE, beta_n =
   stopifnot(length(prevalence)==1, prevalence>=0, prevalence<=1)
 
   ref <- ref |> arrange(TestNumber, Parameter=="Sp")
+  populations <- populations |> mutate(Population = fct(str_c("Pop", row_number())))
+
 
   ## Simulate data:
   ref |>
@@ -67,57 +83,109 @@ cifun <- function(N, prevalence, ref, comp, include_comparator = FALSE, beta_n =
     tests$Sp >= 0, tests$Sp <= 1
   )
 
-  tibble(Individual = seq_len(N)) |>
+  populations |>
+    group_by(Population, N, Prev) |>
+    reframe(Individual = str_c(Population, "_", seq_len(N))) |>
+    ungroup() |>
     mutate(Status = rbinom(n(), 1L, prevalence)) |>
     expand_grid(
       tests |> select(TestIndex, Se, Sp)
     )|>
     mutate(Result = rbinom(n(), 1L, Status*Se + (1-Status)*(1-Sp))) |>
-    select(Individual, Status, TestIndex, Result) ->
+    select(Population, Individual, Status, TestIndex, Result) ->
     simdata
 
   simdata |>
     semi_join(
-      tests |> filter(Type=="Reference"),
+      tests |> {\(x) if(include_comparator) identity(x) else filter(x, Type=="Reference")}(),
       by="TestIndex"
     ) ->
+    longrefdata
+
+  longrefdata |>
+    pivot_wider(names_from="TestIndex", values_from="Result") ->
     refdata
 
-  if(include_comparator){
+  (if(include_comparator){
+    ref |>
+      mutate(Estimate = (Alpha-1)/(Alpha+Beta-2)) |>
+      bind_rows(
+        comp |>
+          pivot_longer(Se:Sp, names_to="Parameter", values_to="Estimate") |>
+          mutate(TestNumber = TestNumber + max(ref$TestNumber), Alpha=2, Beta=1)
+      )
+  }else{
+    ref |> mutate(Estimate = (Alpha-1)/(Alpha+Beta-2))
+  }) |>
+    arrange(Parameter, TestNumber) ->
+    tpriors
 
-  }
+  Alpha <- tpriors[["Alpha"]] |> matrix(ncol=2)
+  Beta <- tpriors[["Beta"]] |> matrix(ncol=2)
+  inits <- list(
+    prev=populations$Prev,
+    se=tpriors |> filter(Parameter=="Se") |> pull(Estimate),
+    sp=tpriors |> filter(Parameter=="Sp") |> pull(Estimate)
+  )
 
+  ntests <- ncol(refdata)-3L
+  stopifnot(nrow(refdata)==sum(populations$N))
 
-  if(nrow(ref)/2L==1L){
+  if(ntests == 1L){
 
-    combos <- tibble(Combo=c("0","1"))
+    populations |>
+      select(Population) |>
+      expand_grid(Combo=c("0","1")) |>
+      arrange(Population, Combo) ->
+      combos
 
-    stopifnot(nrow(refdata)==N)
-    Positive <- sum(refdata[["Result"]])
-    Alpha <- ref[["Alpha"]] |> array(dim=c(1,2))
-    Beta <- ref[["Beta"]] |> array(dim=c(1,2))
+    refdata |>
+      group_by(Population) |>
+      summarise(Positive = sum(Test_1), .groups="drop") |>
+      arrange(Population) |>
+      pull(Positive) ->
+      Positive
 
-    mm <- run.jags(models[[1]], data=list(Positive=Positive, N=N, Alpha=Alpha, Beta=Beta), adapt=1000, burnin=1000, sample=0)
+    mm <- run.jags(models[[1]], data=list(Positive=Positive, N=populations$N, P=nrow(populations), Alpha=Alpha, Beta=Beta), inits=inits, n.chain=1, adapt=1000, burnin=1000, sample=0)
 
-  }else if(nrow(ref)/2L==2L){
+  }else if(ntests == 2L){
+
+    populations |>
+      select(Population) |>
+      arrange(Population) |>
+      expand_grid(
+        Combo = expand_grid(Test1=c("0","1"),Test2=c("0","1"))[,2:1] |> apply(1,str_c,collapse="")
+      ) ->
+      combos
+
+    refdata |>
+      count(Population, Test_1, Test_2) |>
+      complete(Population, Test_1, Test_2, fill = list(n = 0L)) |>
+      arrange(Population, Test_2, Test_1) ->
+      tabdata
+
+    stopifnot(nrow(tabdata)==4L*nrow(populations), sum(tabdata$n) == sum(populations$N))
+    Tally <- tabdata |> pull(n) |> matrix(ncol=nrow(populations))
+
+    mm <- run.jags(models[[2]], data=list(Tally=Tally, N=populations$N, P=nrow(populations), Alpha=Alpha, Beta=Beta), inits=inits, n.chain=1, adapt=1000, burnin=1000, sample=0)
 
   }else{
     stop("Unhandled number of reference tests")
   }
 
-  res <- mm |> as.jags() |> jags.samples("ppp", 5000, type="mean", force.list=TRUE, progress.bar="none")
+  res <- mm |> as.jags() |> jags.samples("ppp", 10000, type="mean", force.list=TRUE, progress.bar="none")
 
-  refdata |>
-    group_by(Individual) |>
+  longrefdata |>
+    group_by(Population, Individual) |>
     arrange(Individual, TestIndex) |>
     summarise(Combo = str_c(Result, collapse=""), .groups="drop") |>
     full_join(
-      combos |> mutate(PPP = apply(res$mean$ppp,1,mean)),
-      by="Combo"
+      combos |> mutate(PPP = as.numeric(res$mean$ppp)),
+      by=c("Combo","Population")
     ) |>
     full_join(
       simdata,
-      by="Individual"
+      by=c("Individual","Population")
     ) |>
     inner_join(
       tests |> filter(Type=="Comparator"),
@@ -130,7 +198,11 @@ cifun <- function(N, prevalence, ref, comp, include_comparator = FALSE, beta_n =
     ) |>
     pivot_longer(Se:Sp, names_to="Parameter", values_to="Estimate") |>
     group_by(TestIndex, TestNumber, Parameter) |>
-    summarise(Mean = mean(Estimate), Median = median(Estimate), Lower95 = coda::HPDinterval(coda::as.mcmc(Estimate))[1], Upper95 = coda::HPDinterval(coda::as.mcmc(Estimate))[2], .groups="drop")
+    summarise(Mean = mean(Estimate), Median = median(Estimate), Lower95 = coda::HPDinterval(coda::as.mcmc(Estimate))[1], Upper95 = coda::HPDinterval(coda::as.mcmc(Estimate))[2], .groups="drop") |>
+    inner_join(
+      tests |> pivot_longer(Se:Sp, names_to="Parameter", values_to="True"),
+      by=c("TestIndex","TestNumber","Parameter")
+    )
 
 
 
