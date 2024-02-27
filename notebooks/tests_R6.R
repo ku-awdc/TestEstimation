@@ -1,3 +1,4 @@
+library("tidyverse")
 library("R6")
 library("compiler")
 library("coda")
@@ -7,57 +8,224 @@ TestEval <- R6Class(
   public = list(
 
     initialize = function(reference_tests, sample_size){
-      stopifnot(nrow(reference_tests)==2L, c("Parameter","Estimate","TestName") %in% names(reference_tests), c("Se","Sp") %in% reference_tests$Parameter)
+      stopifnot(c("Parameter","Estimate","TestName") %in% names(reference_tests), c("Se","Sp") %in% reference_tests$Parameter)
+
+      n_tests <- (nrow(reference_tests)/2L) + 1L
+      stopifnot(n_tests %in% 2L:3L)
+      n_pops <- length(sample_size)
 
       private$reference_tests <- reference_tests
       private$sample_size <- sample_size
-      private$ref_dims <- 4L
+      dims <- list(comp=1L, ref=seq_len(n_tests-1L)+1L, pop=n_tests+1L, type=n_tests+2L)
+      private$dims <- dims
 
       ref_se <- reference_tests |> filter(Parameter=="Se") |> arrange(TestName) |> pull("Estimate")
       ref_sp <- reference_tests |> filter(Parameter=="Sp") |> arrange(TestName) |> pull("Estimate")
 
-      private$make_probs <- function(prev, comparator, refse=ref_se, refsp=ref_sp){
+      cov_to_cor <- function(test, cov){
+        mincor <- (test[1]-1)*(1-test[])
+        maxcor <- pmin(test[1],test[])-test[1]*test[]
+        cor <- cov
+        cor[cov < 0] <- -cov[cov < 0] / mincor[cov < 0]
+        cor[cov > 0] <- cov[cov > 0] / maxcor[cov > 0]
+        cor[1] <- 0
+        cor
+      }
+      cor_to_cov <- function(test, cor){
+        mincor <- (test[1]-1)*(1-test[])
+        maxcor <- pmin(test[1],test[])-test[1]*test[]
+        cov <- cor
+        cov[cor < 0] <- -cor[cor < 0] * mincor[cov < 0]
+        cov[cor > 0] <- cor[cor > 0] * maxcor[cov > 0]
+        cov[1] <- 0
+        cov
+      }
+
+      str_c("Test",seq_len(n_tests)) |>
+        as.list() |>
+        set_names() |>
+        lapply(\(x) c(0,1)) |>
+        do.call("expand_grid", args=_) |>
+        (\(x) mutate(x, Combo=apply(x,1,str_c,collapse="")))() |>
+        select(Combo, everything()) ->
+        status
+
+      status
+
+      status |>
+        mutate(Comp = Test1) |>
+        pivot_longer(!c(Combo,Comp), names_to="Test", values_to="Status") |>
+        mutate(Index = str_replace(Test, "Test", "")) |>
+        mutate(SeText = if_else(Status==1L, str_c("se[",Index,"]"), str_c("(1-se[",Index,"])"))) |>
+        mutate(SpText = if_else(Status==1L, str_c("(1-sp[",Index,"])"), str_c("sp[",Index,"]"))) |>
+        mutate(CovSeText = case_when(
+          Test=="Test1" ~ "",
+          Status==Comp ~ str_c("+dse[", Index, "]"),
+          Status!=Comp ~ str_c("-dse[", Index, "]"),
+        )) |>
+        mutate(CovSpText = case_when(
+          Test=="Test1" ~ "",
+          Status==Comp ~ str_c("+dsp[", Index, "]"),
+          Status!=Comp ~ str_c("-dsp[", Index, "]"),
+        )) |>
+        group_by(Combo) |>
+        mutate(SeText = str_c(str_c(SeText, collapse="*"), " ", str_c(CovSeText, collapse=""))) |>
+        mutate(SpText = str_c(str_c(SpText, collapse="*"), " ", str_c(CovSpText, collapse=""))) |>
+        ungroup() |>
+        select(-CovSeText, -CovSpText, -Index, -Comp) |>
+        pivot_wider(names_from=Test, values_from=Status) |>
+        # Re-order to match the Tally order:
+        arrange(!!!rlang::parse_exprs(str_c("Test",rev(seq_len(n_tests))))) ->
+        test_txt
+
+      str_c("T",seq_len(n_tests)) |>
+        as.list() |>
+        lapply(\(x) str_c(x, "_", c(0,1))) |>
+        c(list(str_c("P",seq_len(n_pops)), c("Se","Sp"))) ->
+        dn
+      private$dimnames <- dn
+      names(private$dimnames) <- names(private$dims)
+
+      fun_txt <- c(
+        "function(prev, se, sp, corse, corsp){",
+        str_c("stopifnot(length(prev)==", n_pops, "L, length(se)==", n_tests, "L, length(sp)==", n_tests, "L)"),
+        str_c("stopifnot(length(corse)==", n_tests, "L, length(corsp)==", n_tests, "L)"),
+        "is_valid <- all(corse>-1, corse<1, corsp>-1, corsp<1, se>0, se<1, sp>0, sp<1, prev>0, prev<1)",
+        str_c("dse <- corse#cor_to_cov(se, corse)"),
+        str_c("dsp <- corsp#cor_to_cov(sp, corsp)"),
+        str_c("se_probs=sp_probs <- numeric(", nrow(test_txt), "L)"),
+        str_c("se_probs[", seq_len(nrow(test_txt)), "] <- ", test_txt$SeText),
+        str_c("sp_probs[", seq_len(nrow(test_txt)), "] <- ", test_txt$SpText),
+        "is_valid <- is_valid && all(se_probs >= 0 & se_probs <= 1 & sp_probs >= 0 & sp_probs <= 1)",
+        str_c("prev <- rep(prev, each=", nrow(test_txt), "L)"),
+        str_c("probs <- array(c(prev[]*se_probs, (1-prev[])*sp_probs), dim=c(", str_c(rep("2",n_tests),collapse=","), ",",n_pops, ",2))"),
+        "attr(probs, 'is_valid') <- is_valid",
+        str_c("attr(probs, 'dimnames') <- ", str_c(capture.output(dput(dn)), collapse="")),
+        "return(probs)",
+        "}"
+      )
+      str_c(fun_txt, collapse="\n") |> parse(text=_) |> eval() |> cmpfun() -> test_fun
+
+      private$make_probs$full <- function(prev, comparator, corse=0, corsp=0, refse=ref_se, refsp=ref_sp){
         se <- c(comparator[1], refse)
         sp <- c(comparator[2], refsp)
-        probs <- array(dim=c(length(sample_size),2,2,2), dimnames = list(str_c("Pop",seq_along(sample_size)),c("Se","Sp"),str_c("Comp",c("-","+")),str_c("Ref1",c("-","+"))))
-        probs[,"Se","Comp-","Ref1-"] <- prev[]*(1-se[1])*(1-se[2])
-        probs[,"Se","Comp+","Ref1-"] <- prev[]*se[1]*(1-se[2])
-        probs[,"Se","Comp-","Ref1+"] <- prev[]*(1-se[1])*se[2]
-        probs[,"Se","Comp+","Ref1+"] <- prev[]*se[1]*se[2]
-        probs[,"Sp","Comp-","Ref1-"] <- (1-prev[])*sp[1]*sp[2]
-        probs[,"Sp","Comp+","Ref1-"] <- (1-prev[])*(1-sp[1])*sp[2]
-        probs[,"Sp","Comp-","Ref1+"] <- (1-prev[])*sp[1]*(1-sp[2])
-        probs[,"Sp","Comp+","Ref1+"] <- (1-prev[])*(1-sp[1])*(1-sp[2])
+        if(length(corse)==1L) corse <- rep(corse, n_tests)
+        if(length(corsp)==1L) corsp <- rep(corsp, n_tests)
+        probs <- test_fun(prev, se, sp, corse, corsp)
         probs
+      }
+
+      private$make_probs$sim <- function(prev, comparator, corse=0, corsp=0){
+        probs <- private$make_probs$full(prev, comparator, corse=corse, corsp=corsp)
+        rv <- probs |> apply(private$dims[c("comp","ref","pop")] |> unlist(), sum)
+        dim(rv) <- c(2^(length(private$dims$ref)+1L), length(prev))
+        attr(rv, "is_valid") <- attr(probs, "is_valid", exact=TRUE)
+        rv
       }
     },
 
-    simulate_data = function(prev, comparator, reassign_prob=0){
+    simulate_data = function(prev, comparator, corse=0, corsp=0){
       stopifnot(length(prev)==length(private$sample_size))
-      probs <- private$make_probs(prev,comparator) |> apply(c(1L,3L, private$ref_dims), sum)
-      tally <- array(dim=c(length(prev), 2^(length(private$ref_dims)+1L)))
-      for(p in seq_len(length(prev))){
-        tally[p,] <- rmultinom(1L, size=private$sample_size[p], prob=probs[p,,])
-      }
-      dim(tally) <- c(length(prev), rep(2L,length=length(private$ref_dims)+1L))
+      probs <- private$make_probs$sim(prev,comparator,corse=corse,corsp=corsp)
+      if(!attr(probs, "is_valid")) stop("Invalid probabilities generated")
 
-      if(reassign_prob>0){
-        move1 <- rbinom(dim(tally)[1],tally[,2,1],reassign_prob)
-        move2 <- rbinom(dim(tally)[1],tally[,1,2],reassign_prob)
-        tally[,1,1] <- tally[,1,1] +move1
-        tally[,2,1] <- tally[,2,1] -move1
-        tally[,1,2] <- tally[,1,2] -move2
-        tally[,2,2] <- tally[,2,2] +move2
+      tally <- array(dim=c(2^(length(private$dims$ref)+1L), length(prev)))
+      for(p in seq_len(length(prev))){
+        tally[,p] <- rmultinom(1L, size=private$sample_size[p], prob=probs[,p])
       }
+      dim(tally) <- c(rep(2L,length=length(private$dims$ref)+1L), length(prev))
+      dimnames(tally) <- private$dimnames[c("comp","ref","pop")] |> set_names("")
 
       self$set_data(tally)
       tally
     },
 
     set_data = function(tally){
-      stopifnot(dim(tally)==c(length(private$sample_size),rep(2L,length=length(private$ref_dims)+1L)), apply(tally,1,sum)==private$sample_size)
+      stopifnot(tally>=0, dim(tally)==c(rep(2L,length=length(private$dims$ref)+1L), length(private$sample_size)), apply(tally,length(dim(tally)),sum)==private$sample_size)
       stopifnot(tally>=0)
       private$tally <- tally
+    },
+
+    estimate_cor = function(with_cor=TRUE, method=c("Nelder-Mead", "BFGS", "CG", "L-BFGS-B")){
+
+      stopifnot(length(private$tally)==length(private$sample_size) * 2^(length(private$dims$ref)+1))
+
+      if(length(private$dims$ref)==1){
+        rv <- self$estimate_cor_2t(with_cor, method)
+      }else if(length(private$dims$ref)==2){
+        rv <- self$estimate_cor_3t(with_cor, method)
+      }else{
+        stop("Number of tests (>3) not supported")
+      }
+      rv
+    },
+
+    estimate_cor_2t = function(with_cor=TRUE, method=c("Nelder-Mead", "BFGS", "CG", "L-BFGS-B")){
+      stopifnot(length(private$dims$ref)==1, length(private$sample_size)==2)  # hard-coded indexes below!
+
+      method <- match.arg(method)
+      lower <- -Inf
+      upper <- Inf
+      if(method=="L-BFGS-B"){
+        lower <- 1e-6
+        upper <- 1.0 - 1e-6
+      }
+
+      nref <- length(private$dims$ref)
+      pars <- c(se=0.75, sp=0.75, rep(0.5, nref*2), rep(0.5,length(private$sample_size)))
+      names(pars) <- c("se","sp", str_c("corse",seq_len(nref)+1),str_c("corsp",seq_len(nref)+1), str_c("prev",seq_along(private$sample_size)))
+      if(!with_cor) pars <- pars[-(3:4)]
+      est_comp <- optim(pars, function(x){
+        if(any(x<=0) || any(x>=1) || sum(x[1:2])<=1) return(Inf)
+        if(with_cor){
+          probs <- private$make_probs$sim(x[5:6], x[1:2], x[3]-0.5, x[4]-0.5)
+        }else{
+          probs <- private$make_probs$sim(x[3:4], x[1:2], 0, 0)
+        }
+        if(!attr(probs, "is_valid")) return(Inf)
+        seq_along(private$sample_size) |>
+          as.list() |>
+          sapply(function(p){
+            -dmultinom(private$tally[,,p], private$sample_size[p], probs[,p], log=TRUE)
+          }) |>
+          sum()
+      }, method=method, lower=lower, upper=upper)
+      if(with_cor) est_comp$par[3:4] <- est_comp$par[3:4]-0.5
+      est_comp$par
+    },
+
+    estimate_cor_3t = function(with_cor=TRUE, method=c("Nelder-Mead", "BFGS", "CG", "L-BFGS-B")){
+      stopifnot(length(private$dims$ref)==2, length(private$sample_size)==1)  # hard-coded indexes below!
+
+      method <- match.arg(method)
+      lower <- -Inf
+      upper <- Inf
+      if(method=="L-BFGS-B"){
+        lower <- 1e-6
+        upper <- 1.0 - 1e-6
+      }
+
+      nref <- length(private$dims$ref)
+      pars <- c(se=0.75, sp=0.75, rep(0.5, nref*2), rep(0.5,length(private$sample_size)))
+      names(pars) <- c("se","sp", str_c("corse",seq_len(nref)+1),str_c("corsp",seq_len(nref)+1), str_c("prev",seq_along(private$sample_size)))
+      if(!with_cor) pars <- pars[-(3:6)]
+      est_comp <- optim(pars, function(x){
+        if(any(x<=0) || any(x>=1) || sum(x[1:2])<=1) return(Inf)
+        if(with_cor){
+          probs <- private$make_probs$sim(x[7], x[1:2], c(0,x[3:4]-0.5), c(0,x[5:6]-0.5))
+        }else{
+          probs <- private$make_probs$sim(x[3], x[1:2], 0, 0)
+        }
+        if(!attr(probs, "is_valid")) return(Inf)
+        seq_along(private$sample_size) |>
+          as.list() |>
+          sapply(function(p){
+            -dmultinom(private$tally[], private$sample_size[p], probs[], log=TRUE)
+          }) |>
+          sum()
+      }, method=method, lower=lower, upper=upper)
+      if(with_cor) est_comp$par[3:6] <- est_comp$par[3:6]-0.5
+      est_comp$par
     },
 
     estimate_prev = function(){
@@ -323,12 +491,13 @@ TestEval <- R6Class(
   private = list(
     reference_tests = tibble(),
     sample_size = integer(),
-    ref_dims = integer(),
+    dims = integer(),
+    dimnames = list(),
     tally = array(),
     est_prev = double(),
     est_comp = double(),
     ppp = double(),
-    make_probs = NULL
+    make_probs = list()
   )
 )
 

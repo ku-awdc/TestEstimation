@@ -62,7 +62,46 @@ ref
 #    and check against original estimate - this gives us some estimate of correlation
 
 source("notebooks/tests_R6.R")
-test_eval <- TestEval$new(ref, 500L)
+
+cor_to_cov <- function(test, cor){
+  mincor <- (test[1]-1)*(1-test[])
+  maxcor <- pmin(test[1],test[])-test[1]*test[]
+  cov <- cor
+  cov[cor < 0] <- -cor[cor < 0] * mincor[cov < 0]
+  cov[cor > 0] <- cor[cor > 0] * maxcor[cov > 0]
+  cov[1] <- 0
+  cov
+}
+cor_to_cov(c(0.8, 0.5), rep(0.99,2))
+cor_to_cov(c(0.9, 0.99), rep(0.99,2))
+
+test_eval <- TestEval$new(ref[1:2,], c(500L, 500L))
+test_eval$simulate_data(c(0.1,0.2), c(0.8,0.9), corse=0.099/2, corsp=0.001)
+test_eval$simulate_data(c(0.1,0.2), c(0.8,0.9), corse=0, corsp=0)
+test_eval$estimate_cor(with_cor=TRUE)
+test_eval$estimate_cor(with_cor=FALSE)
+
+
+
+tribble(~TestNumber, ~Parameter, ~Alpha, ~Beta,
+  1, "Se", 21+1, 21+1,
+  1, "Sp", 99+1, 1+1,
+  2, "Se", 36+1, 4+1,
+  2, "Sp", 95+1, 5+1,
+) |>
+  mutate(Estimate = (Alpha-1)/(Alpha+Beta-2), TestName="Reference") ->
+  ref
+ref
+
+source("notebooks/tests_R6.R")
+test_eval <- TestEval$new(ref, c(1000L))
+test_eval$simulate_data(0.2, c(0.8,0.9), corse=c(0,0.02,0.011), corsp=c(0,0.0001,0.0001))
+#test_eval$simulate_data(0.2, c(0.8,0.9), corse=0, corsp=0)
+test_eval$estimate_cor(with_cor=TRUE)
+test_eval$estimate_cor(with_cor=FALSE)
+
+
+
 (tally <- test_eval$simulate_data(0.2, c(0.8,0.9)))[1,,]
 (tally <- test_eval$simulate_data(0.2, c(0.8,0.9), reassign_prob=0.75))[1,,]
 test_eval$estimate_prev()$par
