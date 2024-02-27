@@ -44,6 +44,15 @@ ref
 
 
 ## TODO:
+# 1. Adjust data sim so it works with 3 tests, where comp has pairwise se/sp cor with both ref - so ref has new column Correlation where this is % of possible pairwise (still need to check probs are valid though)
+# 2. Implement 2/3-test N-pop MLE estimation, where:
+#    - prev can either be based on ref test(s) or all tests
+#    - comp se/sp and secor/spcor x nrefs are estimated together (possibly with prevs)
+#    - pars:  2x2 = 2+2+2 = 6,  3x1 = 2+2*2+1 = 7,  3x2 = 2+2*2+2     = 8
+#    - df:    2x2 = 3+3   = 6,  3x1 = (2^3)-1 = 7,  3x2 = 2*((2^3)-1) = 14
+# 3. Look at optimr
+
+
 # 1. Incorporate ppp to get CI for true prevalence
 # 2. Implement CI for se/sp by bootstrapping from distn. of input ref se/sp and estimated true prevalence
 # 3. Speed up special case of 1 population
@@ -87,12 +96,13 @@ test_eval$get_estimates()
 
 
 source("notebooks/tests_R6.R")
-test_eval <- TestEval$new(ref, c(500L, 250L))
-(tally <- test_eval$simulate_data(c(0.1,0.2), c(0.8,0.9), reassign_prob = 0.95))
+test_eval <- TestEval$new(ref, c(500L, 5000L))
+(tally <- test_eval$simulate_data(c(0.1,0.2), c(0.8,0.9), reassign_prob = 0))
 tally[1,,]
 tally[2,,]
 test_eval$estimate_prev()$par
 test_eval$estimate_comp()$par
+test_eval$estimate_comp_ind()$par
 
 test_eval$re_estimate_prev()$par
 test_eval$estimate_hw()$par

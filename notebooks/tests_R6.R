@@ -139,10 +139,40 @@ TestEval <- R6Class(
       invisible(est_comp)
     },
 
+    estimate_comp_ind = function(method=c("Nelder-Mead", "BFGS", "CG", "L-BFGS-B")){
+
+      stopifnot(!is.null(private$est_prev$par))
+      method <- match.arg(method)
+      lower <- -Inf
+      upper <- Inf
+      if(method=="L-BFGS-B"){
+        lower <- 1e-6
+        upper <- 1.0 - 1e-6
+      }
+
+      estprev <- private$est_prev$par
+      comptally <- private$tally |> apply(c(1L,2L), sum)
+
+      est_comp <- optim(c(se=0.75, sp=0.75), function(x){
+        if(any(x<=0) || any(x>=1) || sum(x)<=1) return(Inf)
+        probs <- private$make_probs(estprev, x) |> apply(c(1L,3L), sum)
+        seq_along(private$sample_size) |>
+          as.list() |>
+          sapply(function(p){
+            -dmultinom(comptally[p,], private$sample_size[p], probs[p,], log=TRUE)
+          }) |>
+          sum()
+      }, method=method, lower=lower, upper=upper)
+
+      private$est_comp <- est_comp
+      invisible(est_comp)
+    },
+
     re_estimate_prev = function(){
       stopifnot(length(private$tally)==length(private$sample_size) * 2^(length(private$ref_dims)+1))
       comptally <- apply(private$tally,c(1L,2L),sum)
       stopifnot(length(comptally)==length(private$sample_size) * 2^length(private$ref_dims))
+      browser()
 
       if(length(private$sample_size)==1L){
         est_prev <- optimise(function(x){
