@@ -107,8 +107,9 @@ CorTestEval <- R6Class(
       # p(+++ | C12+, C13+) = p(Test1 | C12+, C13+) x p(Test2 | C12+, C13+) p(Test3 | C12+, C13+)
       # p(Test1 | C12+, C13+)
       #       = p(Test1 | C12+) + p(Test1 | C13+) - p(Test1 | C12+) x p(Test1 | C13+)
-      # p(Test2 | C12+, C13+) = p(Test2 | C12+)
-      # p(Test3 | C12+, C13+) = p(Test3 | C13+)
+      # p(Test2 | C12+, C13+) = p(Test2 | C12+) + p(Test2 | C13+) - p(Test2 | C12+) x p(Test2 | C13+)
+      # p(Test2 | C13+) = p(Test2)
+      # p(Test3 | C12+, C13+) = p(Test3 | C13+) ...
 
 
 
