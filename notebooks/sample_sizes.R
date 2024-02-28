@@ -205,7 +205,12 @@ find_cor_pn(0.8, 0.5, 0.8, 0.9)
 # TODO: change simulation to use these cor things?
 
 # Final solution:
-# Fit a standard (no correlation) Hui-Walter model (either 3 or 2 test) and use find_cor_pn to get correlations
+# Fit a standard (no correlation) 2-test, 2-pop Hui-Walter model and use find_cor_pn to get correlations
+# If we have 3 tests then either fit 2 x 2-test, or 1x3-test with a negative correlation between refs
+# If we have 3 tests and only 1 pop then 1x3 test and hope the negative correlations aren't important??
+# Best strategy to be developed:  model where everything is estimated simultaneously (3 or 2 tests, 2 pops)
+# using cor_conv to get ise/isp
+#
 # Then back-calculate overall se and sp of comparator using these correlations
 # For 2-test model:  simple
 # For 3-test model we must use both correlation terms (assuming independence of occurrence of corn/p2 and corn/p3, which is fair because we assume test2 and test3 are independent):
@@ -217,8 +222,6 @@ find_cor_pn(0.8, 0.5, 0.8, 0.9)
 # This would also expand out to 4 tests etc but gets complex quickly
 
 
-
-
 # 2-test model:
 prob[1] <- prev * (cor_p*ise[1]*ise[2] + (1-cor_p)*(1-isp[1])*(1-isp[2])) +
           (1-prev) * (cor_n*(1-ise[1])*(1-ise[2]) + (1-cor_n)*isp[1]*isp[2])
@@ -227,12 +230,16 @@ prob[1] <- prev * (cor_p*ise[1]*ise[2] + (1-cor_p)*(1-isp[1])*(1-isp[2])) +
 # 3-test model:
 # triple negative can occur due to: p_12, p_13, n_12, n_13 (assuming p_12 & p_13 (etc) are independent...)
 prob[1] <- prev*(
-            (cor_p_12*ise12[1]*ise12[2]*se[3] + (1-cor_p12)*(1-isp12[1])*(1-isp12[2])*(1-sp[3])) +
-            (cor_p_13*ise13[1]*se[2]*ise13[3] + (1-cor_p13)*(1-isp13[1])*(1-isp12[2])*(1-sp[3]))
+            # Note: test3 doesn't care about p12 so it is always se[3] here:
+            (cor_p_12*ise12[1]*ise12[2]*se[3] + (1-cor_p12)*(1-isp12[1])*(1-isp12[2])*se[3]) +
+            # And as above but for test2:
+            (cor_p_13*ise13[1]*se[2]*ise13[3] + (1-cor_p13)*(1-isp13[1])*se[2]*(1-isp13[3]))
             ) +
           (1-prev)*(
-            (cor_n_12*(1-ise12[1])*(1-ise12[2])*(1-se[3]) + (1-cor_n_12)*isp12[1]*isp12[2]*sp[3]) +
-            (cor_n_13*(1-ise13[1])*(1-se[2])*(1-ise13[3]) + (1-cor_n_13)*isp13[1]*sp[2]*isp13[3])
+            # Note: test3 doesn't care about p12 so it is always sp[3] here:
+            (cor_n_12*(1-ise12[1])*(1-ise12[2])*sp[3] + (1-cor_n_12)*isp12[1]*isp12[2]*sp[3]) +
+            # And as above but for test2:
+            (cor_n_13*(1-ise13[1])*sp[2]*(1-ise13[3]) + (1-cor_n_13)*isp13[1]*sp[2]*isp13[3])
           )
 # etc (where prev*P, ise12[1], ise13[1], isp12[1], isp13[1], p12, p13, n12, n13 are to be estimated i.e. requires 2 pops (10 pars, 14 df))
 
