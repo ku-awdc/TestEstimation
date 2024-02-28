@@ -75,7 +75,208 @@ cor_to_cov <- function(test, cor){
 cor_to_cov(c(0.8, 0.5), rep(0.99,2))
 cor_to_cov(c(0.9, 0.99), rep(0.99,2))
 
+ref[1:2,]
+se <- c(0.8,0.5)
+sp <- c(0.9,0.95)
+prev <- 0.2
+
+ppv <- se*prev / (se*prev + (1-sp)*(1-prev))
+npv <- 1- (sp*(1-prev) / (sp*(1-prev) + (1-se)*prev))
+ppv
+npv
+
+tp <- prev*se
+fn <- prev*(1-se)
+fp <- (1-prev)*(1-sp)
+tn <- (1-prev)*sp
+
+ppv * (tp+fp) + npv * (tn+fn)
+
+probs <- c(
+  se[1]*se[2]*prev + (1-sp[1])*(1-sp[2])*(1-prev),
+  (1-se[1])*se[2]*prev + (sp[1])*(1-sp[2])*(1-prev),
+  se[1]*(1-se[2])*prev + (1-sp[1])*(sp[2])*(1-prev),
+  (1-se[1])*(1-se[2])*prev + (sp[1])*(sp[2])*(1-prev)
+)
+sum(probs)
+
+obspos <- c(probs[1]+probs[3],probs[1]+probs[2])
+obsneg <- c(probs[4]+probs[2],probs[4]+probs[3])
+obspos+obsneg
+ppv*obspos + npv*obsneg
+
+se
+sp
+prev
+
+
+mm <- probs
+mm[1:2] <- mm[1:2]*ppv
+mm[3:4] <- mm[3:4]*npv
+sum(mm)
+
+
+get_overall <- function(ise, isp, cor_p, cor_n){
+  se <- cor_p*ise + (1-cor_p)*(1-isp)
+  sp <- cor_n*(1-ise) + (1-cor_n)*isp
+  c(se=se, sp=sp)
+}
+
+get_overall(1, 1, 0.75, 0.25)
+
+pars <- c(cor_p=0.5, cor_n=0.5)
+optim(pars, function(pars){
+  if(any(pars<0) || any(pars>1)) return(Inf)
+  cc <- get_overall(0.95, 0.8, pars[1], pars[2])
+  sum(abs(cc-c(0.8,0.9)))
+})$par |> round(3)
+
+get_overall(0.95, 0.8, 1, 0.0)
+
+
+cor_conv <- function(se, sp, cor_p, cor_n){
+
+  # se = cy*ue + (1-cy)*(1-up)
+  # sp = (1-cn)*up + cn*(1-ue)
+  #
+  # r = y*e + (1-y)*(1-p)
+  # t = (1-n)*p + n*(1-e)
+  #
+  # e = (p*(-y) + p + r + y -1) / y
+  # p = (-e*n+n-t)/(n-1)
+  #
+  # p = (-((p*(-y) + p + r + y -1) / y)*n+n-t)/(n-1)
+  # p = (n*(-r) + n - t*y) / (n - y)
+  #
+  # e = (((n*(-r) + n - t*y) / (n - y))*(-y) + ((n*(-r) + n - t*y) / (n - y)) + r + y -1) / y
+  # e = (-n*r + r - t*y + t + y -1) / (y-n)
+  #
+  # p = (n*(-r) + n - t*y) / (n - y)
+  # e = (-n*r + r - t*y + t + y -1) / (y-n)
+
+  r <- se
+  t <- sp
+  y <- cor_p
+  n <- cor_n
+
+  isp=p <- (n*(-r) + n - t*y) / (n - y)
+  ise=e <- (-n*r + r - t*y + t + y -1) / (y-n)
+
+  re_est_se <- y*e + (1-y)*(1-p)
+  re_est_sp <- (1-n)*p + n*(1-e)
+
+  c(ise=ise, isp=isp, re_est_se=re_est_se, re_est_sp=re_est_sp)
+}
+cor_conv(0.8, 0.5, 0.8, 0.1)
+cor_conv(0.9, 0.5, 0.9, 0.1)
+
+cor_conv(0.5, 0.75, 0.75, 0.35)
+cor_conv(0.75, 0.9, 0.75, 0.05)
+
+
+
+find_cor_pn <- function(se, sp, ise, isp){
+
+  # se = cy*ue + (1-cy)*(1-up)
+  # sp = (1-cn)*up + cn*(1-ue)
+  #
+  # r = y*e + (1-y)*(1-p)
+  # n = (p-t) / (p+e-1)
+  #
+  # y = (p + r -1) / (p + e -1)
+  # t = (1-n)*p + n*(1-e)
+
+  r <- se
+  t <- sp
+  e <- ise
+  p <- isp
+
+  y=cor_p <- (p + r -1) / (p + e -1)
+  n=cor_n <- (p-t) / (p+e-1)
+
+  re_est_se <- y*e + (1-y)*(1-p)
+  re_est_sp <- (1-n)*p + n*(1-e)
+
+  c(cor_p=cor_p, cor_n=cor_n, re_est_se=re_est_se, re_est_sp=re_est_sp)
+}
+find_cor_pn(0.8, 0.5, 0.8, 0.9)
+
+
+# TODO: change simulation to use these cor things?
+
+# Final solution:
+# Fit a standard (no correlation) Hui-Walter model (either 3 or 2 test) and use find_cor_pn to get correlations
+# Then back-calculate overall se and sp of comparator using these correlations
+# For 2-test model:  simple
+# For 3-test model we must use both correlation terms (assuming independence of occurrence of corn/p2 and corn/p3, which is fair because we assume test2 and test3 are independent):
+# se_overall_test1 <-  corp2*corp3*ise2*ise3 +
+#                      (1-corp2)*corp3*(1-isp2)*ise3 +
+#                      corp2*(1-corp3)*isp2*(1-ise3) +
+#                      (1-corp2)*(1-corp3)*(1-isp2)*(1-ise3)
+# sp_overall_test1 <- similar but with corn1/2
+# This would also expand out to 4 tests etc but gets complex quickly
+
+
+
+
+# 2-test model:
+prob[1] <- prev * (cor_p*ise[1]*ise[2] + (1-cor_p)*(1-isp[1])*(1-isp[2])) +
+          (1-prev) * (cor_n*(1-ise[1])*(1-ise[2]) + (1-cor_n)*isp[1]*isp[2])
+# etc (where ise[2] & isp[2] are derived from data (and cor_p/cor_n) and prev*P, ise[1], isp[1], cor_p and cor_n are estimated, i.e. requires 2 pops (6 pars, 6 df))
+
+# 3-test model:
+# triple negative can occur due to: p_12, p_13, n_12, n_13 (assuming p_12 & p_13 (etc) are independent...)
+prob[1] <- prev*(
+            (cor_p_12*ise12[1]*ise12[2]*se[3] + (1-cor_p12)*(1-isp12[1])*(1-isp12[2])*(1-sp[3])) +
+            (cor_p_13*ise13[1]*se[2]*ise13[3] + (1-cor_p13)*(1-isp13[1])*(1-isp12[2])*(1-sp[3]))
+            ) +
+          (1-prev)*(
+            (cor_n_12*(1-ise12[1])*(1-ise12[2])*(1-se[3]) + (1-cor_n_12)*isp12[1]*isp12[2]*sp[3]) +
+            (cor_n_13*(1-ise13[1])*(1-se[2])*(1-ise13[3]) + (1-cor_n_13)*isp13[1]*sp[2]*isp13[3])
+          )
+# etc (where prev*P, ise12[1], ise13[1], isp12[1], isp13[1], p12, p13, n12, n13 are to be estimated i.e. requires 2 pops (10 pars, 14 df))
+
+
+probs <- c(
+  se[1]*se[2]*prev + (1-sp[1])*(1-sp[2])*(1-prev),
+  (1-se[1])*se[2]*prev + (sp[1])*(1-sp[2])*(1-prev),
+  se[1]*(1-se[2])*prev + (1-sp[1])*(sp[2])*(1-prev),
+  (1-se[1])*(1-se[2])*prev + (sp[1])*(sp[2])*(1-prev)
+)
+sum(probs)
+
+
+
 test_eval <- TestEval$new(ref[1:2,], c(500L, 500L))
+test_eval$simulate_data(c(0.1,0.2), c(0.8,0.9), corse=0.099/2, corsp=0.001)
+
+test_eval <- TestEval$new(ref[1:2,], c(500L))
+prev <- 0.5
+test_eval$simulate_data(prev, c(0.8,0.9), corse=0, corsp=0)
+probs <- test_eval$.__enclos_env__$private$make_probs$full(prev,c(0.8,0.9))
+ppp <- apply(probs,2:4,sum)
+(ppp <- ppp[,,"Se"] / (ppp[,,"Se"]+ppp[,,"Sp"]))
+
+(tally <- apply(probs,c(1:2),sum))
+mean(apply(tally,2,sum)*ppp)
+
+as.numeric(tally)
+pv <- tally*rep(ppp,each=2)
+mean(pv)
+sum(pv[2,])/sum(pv)
+sum(1-pv[1,])/sum(1-pv)
+
+sum(ppp*tally[1,])
+ppp*tally[2,]
+0.07636364 / sum(ppp*tally[2,])
+
+se <- (ppp*t(tally)) |> apply(2,sum)
+se[1]/sum(se)
+sp <- ((1-ppp)*t(tally)) |> apply(2,sum)
+sp[1]/sum(sp)
+
+
+
 test_eval$simulate_data(c(0.1,0.2), c(0.8,0.9), corse=0.099/2, corsp=0.001)
 test_eval$simulate_data(c(0.1,0.2), c(0.8,0.9), corse=0, corsp=0)
 test_eval$estimate_cor(with_cor=TRUE)
