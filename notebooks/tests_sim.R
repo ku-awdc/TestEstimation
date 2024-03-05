@@ -104,11 +104,13 @@ create_hw_function <- function(n_tests, cov=FALSE){
     arrange(!!!rlang::parse_exprs(str_c("Test",rev(seq_len(n_tests))))) ->
     test_txt
 
+  if(FALSE){
   str_c("T",seq_len(n_tests)) |>
     as.list() |>
     lapply(\(x) str_c(x, "_", c(0,1))) |>
     c(list(str_c("P",seq_len(n_pops)), c("Se","Sp"))) ->
     dn
+  }
 
   fun_txt <- c(
     if(cov) "function(se, sp, dse, dsp){" else "function(se, sp){",

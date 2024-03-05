@@ -4,16 +4,15 @@ library("tidyverse")
 library("pbapply")
 source("notebooks/tests_sim.R")
 
+#Rcpp::sourceCpp("notebooks/hw_2t.cpp")
+
+
 library("TMB")
-compile("notebooks/hw_2t.cpp")
-dyn.load(dynlib("notebooks/hw_2t"))
-
-N <- 100
-dt <- rnbinom(N, mu=10, size=2)
-Params = list("pre_log_a"=log(10), "pre_log_b"=0, "pre_mean_i"=pmax(dt,0.1))
-Data = list("pre_i"=dt)
-obj <- MakeADFun(data=Data, parameters=Params, DLL="gamma")
-
+try(setwd("notebooks"))
+try(dyn.unload(dynlib("hw_2t")))
+compile("hw_2t.cpp")
+dyn.load(dynlib("hw_2t"))
+setwd("../")
 
 tribble(~Population, ~Prevalence, ~SampleProportion,
   "1", 0.05, 1,
@@ -58,6 +57,22 @@ tribble(~"TestA", ~"TestB", ~"Parameter", ~"Correlation",
 ) ->
   correlations
 
+
+source("notebooks/tests_sim.R")
+ts <- TestSim$new(populations, tests |> filter(Test %in% c("A1","C1")), correlations |> filter(TestA %in% c("A1","C1"), TestB %in% c("A1","C1")))
+tally <- (ts$simulate_data(1000, FALSE))
+
+tally <- tally |> simplify2array()
+dim(tally) <- c(4,3)
+tally
+
+Params <- list(se=rep(0.75,2L), sp=rep(0.75,2L), covse=0.0, covsp=0.0, prev=rep(0.5,3L))
+Data <- list(N=1L, P=3L, tally=tally)
+obj <- MakeADFun(data=Data, parameters=Params, DLL="hw_2t")
+obj$hessian <- TRUE
+do.call("optim", obj)
+
+obj$fn(obj$par)
 
 rm(ts); rm(TestSim); gc()
 source("notebooks/tests_sim.R")
