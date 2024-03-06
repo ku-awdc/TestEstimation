@@ -6,14 +6,6 @@ source("notebooks/tests_sim.R")
 
 #Rcpp::sourceCpp("notebooks/hw_2t.cpp")
 
-
-library("TMB")
-try(setwd("notebooks"))
-try(dyn.unload(dynlib("hw_2t")))
-compile("hw_2t.cpp")
-dyn.load(dynlib("hw_2t"))
-setwd("../")
-
 tribble(~Population, ~Prevalence, ~SampleProportion,
   "1", 0.05, 1,
   "2", 0.1, 1,
@@ -57,56 +49,30 @@ tribble(~"TestA", ~"TestB", ~"Parameter", ~"Correlation",
 ) ->
   correlations
 
+library("TMB")
+cwd <- getwd()
+setwd("notebooks/TMB")
+try(dyn.unload(dynlib("hw_2t")))
+compile("hw_2t.cpp")
+dyn.load(dynlib("hw_2t"))
+setwd(cwd)
 
-source("notebooks/tests_sim.R")
-ts <- TestSim$new(populations, tests |> filter(Test %in% c("A1","C1")), correlations |> filter(TestA %in% c("A1","C1"), TestB %in% c("A1","C1")))
-tally <- (ts$simulate_data(1000, FALSE))
-
-tally <- tally |> simplify2array()
-dim(tally) <- c(4,3)
-tally
-
-Params <- list(se=rep(0.75,2L), sp=rep(0.75,2L), covse=0.0, covsp=0.0, prev=rep(0.5,3L))
-Data <- list(N=1L, P=3L, tally=tally)
-obj <- MakeADFun(data=Data, parameters=Params, DLL="hw_2t")
-obj$hessian <- TRUE
-do.call("optim", obj)
-
-obj$fn(obj$par)
 
 rm(ts); rm(TestSim); gc()
 source("notebooks/tests_sim.R")
-ts <- TestSim$new(populations, tests, correlations)
-tally <- (ts$simulate_data(1000))
-ts$method_A()
-ts$method_B()
-ts$method_C("m")$Pars
-#ts$method_C("p")
-ts$method_D()$Pars
-
-source("notebooks/tests_sim.R")
-ts <- TestSim$new(populations, tests |> filter(Test!="B"),  correlations)
-tally <- (ts$simulate_data(1000, FALSE))
-ts$method_A()
-ts$method_B()
-ts$method_C("m")$Pars
-ts$method_C("p")$Pars
-ts$method_C("n")$Pars
-ts$method_D()$Pars
-
-ts <- TestSim$new(populations, tests, correlations)
-
-
-source("notebooks/tests_sim.R")
 
 using <- c("A1","B1","D1")
+using <- c("A1","C1")
 tt <- tests |> filter(Test %in% using)
 tc <- correlations |> filter(TestA %in% using, TestB %in% using)
 ntests <- nrow(tt)/2L
 ts <- TestSim$new(populations, tt, tc)
 ts$simulate_data(100L, FALSE)
-iterations <- 250L
+ts$method_C_TMB("HW")$Pars
+ts$method_C_TMB("HWpriors")$Pars
+ts$method_C("none")$Pars
 
+iterations <- 250L
 expand_grid(TotalN = c(100L,250L,500L), Iteration = seq_len(iterations)) |>
   rowwise() |>
   group_split() |>
@@ -117,7 +83,8 @@ expand_grid(TotalN = c(100L,250L,500L), Iteration = seq_len(iterations)) |>
         bind_rows(
           ts$method_A(),
           ts$method_B(),
-          if(ntests==2) ts$method_C("m"),
+          if(ntests==2) ts$method_C_TMB(),
+          if(ntests==2) ts$method_C_TMB("HWpriors"),
           if(FALSE && ntests==2) ts$method_C("p"),
           ts$method_C("n"),
           if(FALSE && ntests==2) ts$method_D()

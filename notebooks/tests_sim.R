@@ -6,6 +6,7 @@ library("coda")
 library("optimx")
 # install.packages(checkallsolvers())
 
+
 # This is a helper class specifically for the simulation study
 
 # Inputs to c'tor are:
@@ -253,6 +254,9 @@ TestSim <- R6Class(
       }else{
         probs <- private$prob_funs$full(private$parameters$se, private$parameters$sp, private$parameters$covse, private$parameters$covsp)
       }
+
+      stopifnot(!isFALSE(probs))
+
       prev <- private$parameters$prev
       seq_along(prev) |>
         lapply(function(p){
@@ -374,6 +378,38 @@ TestSim <- R6Class(
         pars
 
       return(tibble(Method = "B", Se = pars[1L], Sp=pars[2L]))
+
+    },
+
+    method_C_TMB = function(method=c("HW","HWpriors"), opt_method="nlm"){
+
+      st <- Sys.time()
+      stopifnot(private$parameters$n_test==2L)
+
+      method <- match.arg(method)
+
+      tally <- private$data$tally_full |> do.call("bind_cols", args=_) |> as.matrix()
+      tally[] <- as.double(tally)
+      Params <- list(selg=rep(1,2), splg=rep(1,2), prevlg=rep(0,private$parameters$n_test))
+      Data <- list(P=private$parameters$n_test, tally=tally, se_alpha=rep(2,2), se_beta=rep(1,2), sp_alpha=rep(2,2), sp_beta=rep(1,2))
+
+      if(method=="HWpriors"){
+        Params$selg[2] <- qlogis(private$parameters$se[2])
+        Params$splg[2] <- qlogis(private$parameters$sp[2])
+        sepr <- abs(1000*(c(0,1)-private$parameters$se[2]))
+        sppr <- abs(1000*(c(0,1)-private$parameters$sp[2]))
+        Data$se_alpha <- c(1,sepr[1])
+        Data$se_beta[2] <- sepr[2]
+        Data$sp_alpha <- c(1,sppr[1])
+        Data$sp_beta[2] <- sppr[2]
+      }
+      obj <- MakeADFun(data=Data, parameters=Params, DLL="hw_2t")
+      pars <- plogis(optimr(unlist(Params), obj$fn, obj$gr, obj$he, method=opt_method)$par)
+
+      ests <- pars[c(1L,3L)]
+      dt <- as.numeric(Sys.time() - st, units="secs")
+
+      tibble(Method = method, Se = ests[1L], Sp = ests[2L], Time = dt, Pars = list(pars))
 
     },
 
