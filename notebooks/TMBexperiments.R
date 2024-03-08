@@ -62,6 +62,12 @@ tally
 library("TMB")
 try(setwd("notebooks/TMB"))
 
+try(dyn.unload(dynlib("hw_2t_cor")))
+compile("hw_2t_cor.cpp")
+dyn.load(dynlib("hw_2t_cor"))
+
+
+
 try(dyn.unload(dynlib("hw_2t")))
 compile("hw_2t.cpp")
 dyn.load(dynlib("hw_2t"))
